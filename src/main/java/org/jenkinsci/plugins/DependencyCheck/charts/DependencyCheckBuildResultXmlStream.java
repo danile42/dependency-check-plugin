@@ -13,19 +13,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.jenkinsci.plugins.DependencyCheck;
+package org.jenkinsci.plugins.DependencyCheck.charts;
 
-import hudson.Plugin;
+import java.util.Collections;
 
-/**
- * Initializes the DependencyCheck plugin.
- *
- * @author Steve Springett (steve.springett@owasp.org)
- * @since 1.0.0
- */
-public class DependencyCheckPlugin extends Plugin {
+import org.jenkinsci.plugins.DependencyCheck.model.SeverityDistribution;
 
-    static final String PLUGIN_NAME = "DependencyCheck";
-    static final String PLUGIN_ID = "dependency-check-jenkins-plugin";
+import io.jenkins.plugins.util.AbstractXmlStream;
+
+public class DependencyCheckBuildResultXmlStream extends AbstractXmlStream<DependencyCheckBuildResult> {
+
+    public DependencyCheckBuildResultXmlStream() {
+        super(DependencyCheckBuildResult.class);
+    }
+
+    @Override
+    protected DependencyCheckBuildResult createDefaultValue() {
+        return new DependencyCheckBuildResult(Collections.emptyList(), new SeverityDistribution(0));
+    }
 
 }

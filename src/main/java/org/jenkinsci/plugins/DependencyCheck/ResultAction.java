@@ -15,19 +15,27 @@
  */
 package org.jenkinsci.plugins.DependencyCheck;
 
-import hudson.model.Action;
-import hudson.model.Run;
-import jenkins.model.RunAction2;
-import jenkins.tasks.SimpleBuildStep;
-import net.sf.json.JSONObject;
-import net.sf.json.JsonConfig;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+
+import org.jenkinsci.plugins.DependencyCheck.action.ResultProjectAction;
+import org.jenkinsci.plugins.DependencyCheck.charts.DependencyCheckBuildResult;
+import org.jenkinsci.plugins.DependencyCheck.charts.DependencyCheckBuildResultXmlStream;
 import org.jenkinsci.plugins.DependencyCheck.model.Finding;
 import org.jenkinsci.plugins.DependencyCheck.model.SeverityDistribution;
 import org.jenkinsci.plugins.DependencyCheck.transformer.FindingsTransformer;
 import org.kohsuke.stapler.bind.JavaScriptMethod;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
+
+import hudson.model.Action;
+import hudson.model.Run;
+import io.jenkins.plugins.util.AbstractXmlStream;
+import io.jenkins.plugins.util.BuildAction;
+import io.jenkins.plugins.util.JobAction;
+import net.sf.json.JSONObject;
+import net.sf.json.JsonConfig;
 
 /**
  * Ported from the Dependency-Track Jenkins plugin.
@@ -35,20 +43,19 @@ import java.util.List;
  * @author Steve Springett (steve.springett@owasp.org)
  * @since 5.0.0
  */
-public class ResultAction implements RunAction2, SimpleBuildStep.LastBuildAction {
+public class ResultAction extends BuildAction<DependencyCheckBuildResult> {
 
-    private transient Run<?, ?> run; // transient: see RunAction2, and JENKINS-45892
-    private List<Finding> findings;
-    private SeverityDistribution severityDistribution;
+    private static final long serialVersionUID = -6533677178186658819L;
+    private transient List<Finding> findings; // required for backward compatibility, will be removed
+    private transient SeverityDistribution severityDistribution; // required for backward compatibility, will be removed
 
-    public ResultAction(Run<?, ?> build, List<Finding> findings, SeverityDistribution severityDistribution) {
-        this.findings = findings;
-        this.severityDistribution = severityDistribution;
+    public ResultAction(final Run<?, ?> owner, List<Finding> findings, SeverityDistribution severityDistribution) {
+        super(owner, new DependencyCheckBuildResult(findings, severityDistribution));
     }
 
     @Override
     public String getIconFileName() {
-        return "/plugin/" + DependencyCheckPlugin.PLUGIN_ID + "/icons/dependency-check-icon.svg";
+        return "/plugin/" + DependencyCheckConstants.PLUGIN_ID + "/icons/dependency-check-icon.svg";
     }
 
     @Override
@@ -62,30 +69,47 @@ public class ResultAction implements RunAction2, SimpleBuildStep.LastBuildAction
     }
 
     @Override
-    public void onAttached(Run<?, ?> run) {
-        this.run = run;
-    }
-
-    @Override
-    public void onLoad(Run<?, ?> run) {
-        this.run = run;
+    protected AbstractXmlStream<DependencyCheckBuildResult> createXmlStream() {
+        return new DependencyCheckBuildResultXmlStream();
     }
 
     @Override
     public Collection<? extends Action> getProjectActions() {
-        return Collections.singleton(new JobAction(run.getParent()));
+        Collection<Action> prjActions = new ArrayList<>(2);
+        prjActions.addAll(super.getProjectActions());
+        prjActions.add(new ResultProjectAction(getOwner().getParent()));
+        return Collections.unmodifiableCollection(prjActions);
     }
 
-    public Run getRun() {
-        return run;
+    @Override
+    protected JobAction<? extends BuildAction<DependencyCheckBuildResult>> createProjectAction() {
+        return new org.jenkinsci.plugins.DependencyCheck.JobAction(getOwner().getParent());
+    }
+
+    @Override
+    protected String getBuildResultBaseName() {
+        return "vulnerabilityReport.xml";
     }
 
     public SeverityDistribution getSeverityDistribution() {
-        return severityDistribution;
+        migrate();
+        return getResult().getSeverityDistribution();
+    }
+
+    private void migrate() {
+        if (severityDistribution != null || findings != null) {
+            Path resultXML = getOwner().getRootDir().toPath().resolve(getBuildResultBaseName());
+            if (!resultXML.toFile().exists()) {
+                createXmlStream().write(resultXML, new DependencyCheckBuildResult(findings, severityDistribution));
+            }
+            findings = null;
+            severityDistribution = null;
+        }
     }
 
     public List<Finding> getFindings() {
-        return findings;
+        migrate();
+        return getResult().getFindings();
     }
 
     /**
@@ -94,10 +118,9 @@ public class ResultAction implements RunAction2, SimpleBuildStep.LastBuildAction
      * @return the UI model as JSON
      */
     @JavaScriptMethod
-    @SuppressWarnings("unused") // Called by jelly view
     public JSONObject getFindingsJson() {
         final FindingsTransformer transformer = new FindingsTransformer();
-        return transformer.transform(findings);
+        return transformer.transform(getFindings());
     }
 
     /**
@@ -106,11 +129,10 @@ public class ResultAction implements RunAction2, SimpleBuildStep.LastBuildAction
      * @return the UI model as JSON
      */
     @JavaScriptMethod
-    @SuppressWarnings("unused") // Called by jelly view
     public JSONObject getSeverityDistributionJson() {
         JsonConfig jsonConfig = new JsonConfig();
-        jsonConfig.setExcludes( new String[]{ "buildNumber"} );
-        return JSONObject.fromObject(severityDistribution, jsonConfig);
+        jsonConfig.setExcludes(new String[] { "buildNumber" });
+        return JSONObject.fromObject(getSeverityDistribution(), jsonConfig);
     }
 
 }
